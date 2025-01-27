@@ -3,6 +3,15 @@ import os
 import logging
 from concurrent.futures import ThreadPoolExecutor
 
+def analyze_folder(input_folder):
+    """Analyze the input folder and provide a summary of files and total size."""
+    total_size = 0
+    image_files = [f for f in os.listdir(input_folder) if f.lower().endswith(('jpeg', 'jpg', 'png', 'webp'))]
+    for filename in image_files:
+        file_path = os.path.join(input_folder, filename)
+        total_size += os.path.getsize(file_path)
+    return len(image_files), total_size / 1024  # Return count and size in KB
+
 def optimize_image(file_path, output_path, quality=85, max_width=None, max_height=None, preserve_metadata=False):
     try:
         img = Image.open(file_path)
@@ -33,6 +42,12 @@ def optimize_images(input_folder, output_folder, quality=85, max_width=None, max
         os.makedirs(output_folder)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+    # Analyze input folder
+    image_count, total_size_kb = analyze_folder(input_folder)
+    logging.info(f"Analyzing folder: {input_folder}")
+    logging.info(f"Found {image_count} image(s) with a total size of {total_size_kb:.2f} KB.")
+
     logging.info(f"Starting image optimization for folder: {input_folder}")
 
     image_files = [f for f in os.listdir(input_folder) if f.lower().endswith(('jpeg', 'jpg', 'png', 'webp'))]
