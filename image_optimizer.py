@@ -32,8 +32,9 @@ def optimize_image(file_path, output_path, quality=85, max_width=None, max_heigh
         optimized_size = os.path.getsize(output_path)
         reduction = ((original_size - optimized_size) / original_size) * 100
         logging.info(f"Optimized: {os.path.basename(file_path)} | "
-                     f"Original: {original_size / 1024:.2f} KB | Optimized: {optimized_size / 1024:.2f} KB "
-                     f"({reduction:.2f}% reduction)")
+                     f"Original: {original_size / 1024:.2f} KB | "
+                     f"Optimized: {optimized_size / 1024:.2f} KB | "
+                     f"Reduction: {reduction:.2f}%")
     except Exception as e:
         logging.error(f"Failed to optimize {file_path}: {e}")
 
@@ -47,7 +48,6 @@ def optimize_images(input_folder, output_folder, quality=85, max_width=None, max
     image_count, total_size_kb = analyze_folder(input_folder)
     logging.info(f"Analyzing folder: {input_folder}")
     logging.info(f"Found {image_count} image(s) with a total size of {total_size_kb:.2f} KB.")
-
     logging.info(f"Starting image optimization for folder: {input_folder}")
 
     image_files = [f for f in os.listdir(input_folder) if f.lower().endswith(('jpeg', 'jpg', 'png', 'webp'))]
@@ -60,9 +60,29 @@ def optimize_images(input_folder, output_folder, quality=85, max_width=None, max
 
     logging.info("Image optimization completed.")
 
+    # Post-optimization summary
+    total_original = 0
+    total_optimized = 0
+
+    for filename in image_files:
+        original_path = os.path.join(input_folder, filename)
+        optimized_path = os.path.join(output_folder, filename)
+        if os.path.exists(original_path) and os.path.exists(optimized_path):
+            total_original += os.path.getsize(original_path)
+            total_optimized += os.path.getsize(optimized_path)
+
+    total_saved = total_original - total_optimized
+    percent_saved = (total_saved / total_original) * 100 if total_original else 0
+
+    logging.info("Post-Optimization Summary:")
+    logging.info(f"Original total size: {total_original / 1024:.2f} KB")
+    logging.info(f"Optimized total size: {total_optimized / 1024:.2f} KB")
+    logging.info(f"Total space saved: {total_saved / 1024:.2f} KB ({percent_saved:.2f}%)")
+
 # Example usage
 input_folder = "input_images"
 output_folder = "optimized_images"
+
 optimize_images(
     input_folder,
     output_folder,
