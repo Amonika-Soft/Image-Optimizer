@@ -1,18 +1,22 @@
-# Image Optimizer
+# Image Optimizer Pro
 
-This script optimizes JPEG and PNG images by reducing their file size while maintaining quality.
+A Python tool for batch image optimization with detailed reporting.  
+Supports JPEG, PNG, WebP, and AVIF formats, generates CSV and HTML reports with visual charts.
 
 ## Features
-- Reduces image size up to 70% without visible quality loss.
-- Supports batch processing.
+- Reduces image size up to 70% without visible quality loss.  
+- Batch processing with multithreading.  
+- Input formats: JPEG, PNG, WebP, AVIF.  
+- Output formats: Original / JPEG / PNG / WebP / AVIF.  
+- Configurable quality, resize, and metadata preservation.  
+- CSV and HTML reports with file-by-file statistics.  
+- Visual charts: per-file savings (bar) and total before/after (pie).  
+- Progress bar for better visibility during optimization.  
 
-## How to Use
-1. Place your images in the `input_images` folder.
-2. Run the script.
-3. Find optimized images in the `optimized_images` folder.
-
-## Requirements
-- Python 3.x
-- Pillow library
-
-## Installation
+## Usage
+1. Place your images in the `input_images` folder.  
+2. Run the script:  
+   ```bash
+   python image_optimizer.py input_images optimized_images \
+     --quality 85 --resize 1920x1080 --threads 8 --target-format webp \
+     --report-prefix report
