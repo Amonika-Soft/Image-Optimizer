@@ -9,6 +9,7 @@ import argparse
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image, ImageOps
+import numpy as np
 
 try:
     import pillow_avif  # noqa
@@ -21,6 +22,8 @@ try:
 except Exception:
     def tqdm(iterable, **kwargs):
         return iterable
+
+from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 
 import matplotlib
 matplotlib.use("Agg")
@@ -104,6 +107,8 @@ def process_one(input_folder: str, output_folder: str, filename: str,
     dst_path = os.path.join(output_folder, filename)
     original_size = os.path.getsize(src_path)
 
+    psnr_val, ssim_val = None, None
+
     try:
         with Image.open(src_path) as im:
             if max_w or max_h:
@@ -111,19 +116,33 @@ def process_one(input_folder: str, output_folder: str, filename: str,
                 im.thumbnail((max_w or im.width, max_h or im.height))
             saved_path = save_image(im, dst_path, target_format, quality, preserve_metadata)
             optimized_size = os.path.getsize(saved_path)
+
+        # Quality metrics
+        try:
+            with Image.open(src_path) as orig, Image.open(saved_path) as opt:
+                orig_arr = np.array(orig.convert("RGB"))
+                opt_arr = np.array(opt.convert("RGB"))
+                psnr_val = peak_signal_noise_ratio(orig_arr, opt_arr, data_range=255)
+                ssim_val = structural_similarity(orig_arr, opt_arr, channel_axis=2)
+        except Exception as e:
+            logging.warning(f"Quality metrics failed for {filename}: {e}")
+
     except Exception as e:
         logging.error(f"Failed: {filename} — {e}")
         return {"filename": filename, "status": f"error: {e}", "original_bytes": original_size,
-                "optimized_bytes": original_size, "reduction_pct": 0.0, "output_path": ""}
+                "optimized_bytes": original_size, "reduction_pct": 0.0,
+                "psnr": None, "ssim": None, "output_path": ""}
 
     reduction = (original_size - optimized_size) / original_size * 100 if original_size else 0.0
     logging.info(f"Optimized {filename} | {sizeof_fmt(original_size)} → {sizeof_fmt(optimized_size)} | -{reduction:.2f}%")
     return {"filename": filename, "status": "ok", "original_bytes": original_size,
-            "optimized_bytes": optimized_size, "reduction_pct": reduction, "output_path": saved_path}
+            "optimized_bytes": optimized_size, "reduction_pct": reduction,
+            "psnr": psnr_val, "ssim": ssim_val, "output_path": saved_path}
 
 
 def write_csv(rows: list, csv_path: str):
-    fieldnames = ["filename", "status", "original_bytes", "optimized_bytes", "reduction_pct", "output_path"]
+    fieldnames = ["filename", "status", "original_bytes", "optimized_bytes",
+                  "reduction_pct", "psnr", "ssim", "output_path"]
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
         w.writeheader()
@@ -136,6 +155,7 @@ def plot_and_save(rows: list, charts_dir: str):
     names = [r["filename"] for r in rows]
     reductions = [max(0.0, r["reduction_pct"]) for r in rows]
 
+    # Bar chart (size reduction)
     plt.figure()
     plt.title("Savings per file (%)")
     plt.xlabel("Files")
@@ -147,6 +167,7 @@ def plot_and_save(rows: list, charts_dir: str):
     plt.savefig(bar_path, dpi=150)
     plt.close()
 
+    # Pie chart (before vs after)
     total_original = sum(r["original_bytes"] for r in rows)
     total_optimized = sum(r["optimized_bytes"] for r in rows)
     plt.figure()
@@ -156,10 +177,26 @@ def plot_and_save(rows: list, charts_dir: str):
     plt.savefig(pie_path, dpi=150)
     plt.close()
 
-    return bar_path, pie_path
+    # SSIM distribution
+    ssim_vals = [r["ssim"] for r in rows if r["ssim"] is not None]
+    if ssim_vals:
+        plt.figure()
+        plt.title("SSIM Distribution")
+        plt.xlabel("Files")
+        plt.ylabel("SSIM (0-1)")
+        plt.xticks(rotation=90)
+        plt.tight_layout()
+        plt.bar(range(len(ssim_vals)), ssim_vals, color="orange")
+        ssim_path = os.path.join(charts_dir, "ssim_distribution.png")
+        plt.savefig(ssim_path, dpi=150)
+        plt.close()
+    else:
+        ssim_path = ""
+
+    return bar_path, pie_path, ssim_path
 
 
-def write_html(rows: list, html_path: str, bar_path: str, pie_path: str,
+def write_html(rows: list, html_path: str, bar_path: str, pie_path: str, ssim_path: str,
                input_folder: str, output_folder: str):
     total_original = sum(r["original_bytes"] for r in rows)
     total_optimized = sum(r["optimized_bytes"] for r in rows)
@@ -170,7 +207,10 @@ def write_html(rows: list, html_path: str, bar_path: str, pie_path: str,
     def tr(r):
         return f"<tr><td>{r['filename']}</td><td align='right'>{sizeof_fmt(r['original_bytes'])}</td>" \
                f"<td align='right'>{sizeof_fmt(r['optimized_bytes'])}</td>" \
-               f"<td align='right'>{r['reduction_pct']:.2f}%</td><td>{r['status']}</td></tr>"
+               f"<td align='right'>{r['reduction_pct']:.2f}%</td>" \
+               f"<td align='right'>{r['psnr']:.2f if r['psnr'] else 'N/A'}</td>" \
+               f"<td align='right'>{r['ssim']:.4f if r['ssim'] else 'N/A'}</td>" \
+               f"<td>{r['status']}</td></tr>"
 
     rows_html = "\n".join(tr(r) for r in rows)
 
@@ -184,9 +224,14 @@ def write_html(rows: list, html_path: str, bar_path: str, pie_path: str,
 <p><b>Files:</b> {len(rows)} <br><b>Total saved:</b> {sizeof_fmt(saved)} ({saved_pct:.2f}%)</p>
 <h2>Charts</h2>
 <p><img src="{os.path.relpath(bar_path, os.path.dirname(html_path))}"></p>
-<p><img src="{os.path.relpath(pie_path, os.path.dirname(html_path))}"></p>
+<p><img src="{os.path.relpath(pie_path, os.path.dirname(html_path))}"></p>"""
+
+    if ssim_path:
+        html += f'<p><img src="{os.path.relpath(ssim_path, os.path.dirname(html_path))}"></p>'
+
+    html += f"""
 <h2>Details</h2>
-<table><tr><th>File</th><th>Before</th><th>After</th><th>Saved</th><th>Status</th></tr>
+<table><tr><th>File</th><th>Before</th><th>After</th><th>Saved</th><th>PSNR</th><th>SSIM</th><th>Status</th></tr>
 {rows_html}</table></body></html>"""
 
     with open(html_path, "w", encoding="utf-8") as f:
@@ -194,7 +239,7 @@ def write_html(rows: list, html_path: str, bar_path: str, pie_path: str,
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Batch image optimization with CSV/HTML reports and charts.")
+    parser = argparse.ArgumentParser(description="Batch image optimization with CSV/HTML reports, charts, and quality metrics.")
     parser.add_argument("input")
     parser.add_argument("output")
     parser.add_argument("--quality", type=int, default=85)
@@ -224,10 +269,10 @@ def main():
 
     csv_path = os.path.join(args.output, f"{args.report_prefix}.csv")
     charts_dir = os.path.join(args.output, "charts")
-    bar_path, pie_path = plot_and_save(results, charts_dir)
+    bar_path, pie_path, ssim_path = plot_and_save(results, charts_dir)
     html_path = os.path.join(args.output, f"{args.report_prefix}.html")
     write_csv(results, csv_path)
-    write_html(results, html_path, bar_path, pie_path, args.input, args.output)
+    write_html(results, html_path, bar_path, pie_path, ssim_path, args.input, args.output)
 
     total_original = sum(r["original_bytes"] for r in results)
     total_optimized = sum(r["optimized_bytes"] for r in results)
